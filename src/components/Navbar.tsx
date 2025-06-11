@@ -3,24 +3,21 @@ import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAppSelector, useAppDispatch } from "@/store/hooks";
-import { logoutUser } from "@/store/slices/authSlice";  // ← import the correct thunk
+import { logoutUser } from "@/store/slices/authSlice";
 
 const Navbar: React.FC = () => {
-  // Grab `user` from the auth slice; derive isAuthenticated as !!user
-  const { user } = useAppSelector((state) => state.auth);
-  const isAuthenticated = !!user;
+  const user = useAppSelector((state) => state.auth.user);
+  const isAuthenticated = Boolean(user);
 
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
 
-  const handleLogout = () => {
+  const handleLogout = (): void => {
     dispatch(logoutUser());
-    navigate("/");
+    navigate("/login", { replace: true });
   };
 
-  const isAdmin = () => {
-    return user?.is_role === "admin";  // ← use `is_role` instead of `role`
-  };
+  const isAdmin = (): boolean => user?.is_role === "admin";
 
   return (
     <nav className="bg-green-600 text-black py-4 px-6 shadow-md">
@@ -29,7 +26,6 @@ const Navbar: React.FC = () => {
           <span className="mr-2">🚌</span>
           EcoBus
         </Link>
-
         <div className="flex items-center space-x-6">
           <Link to="/" className="hover:text-green-200 transition-colors text-black font-bold">
             Home
@@ -41,16 +37,13 @@ const Navbar: React.FC = () => {
           {isAuthenticated ? (
             <div className="flex items-center space-x-4">
               {isAdmin() && (
-                <Link 
-                  to="/admin" 
-                  className="text-green-200 hover:text-black transition-colors"
-                >
+                <Link to="/admin" className="text-green-200 hover:text-black transition-colors">
                   Admin Dashboard
                 </Link>
               )}
               <span className="text-black">Hello, {user?.name}</span>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="bg-transparent text-black border-black hover:bg-black hover:text-green-600"
                 onClick={handleLogout}
               >

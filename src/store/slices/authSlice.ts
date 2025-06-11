@@ -1,5 +1,5 @@
 // src/store/slices/authSlice.ts
-import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 import { API_BASE_URL } from '../apiConfig';
 
@@ -15,7 +15,6 @@ export interface User {
   is_role: 'admin' | 'customer' | null;
   created_at: string;
   updated_at: string;
-
 }
 
 interface AuthState {
@@ -23,241 +22,137 @@ interface AuthState {
   token: string | null;
   isLoading: boolean;
   error: string | null;
-  didInitialize: boolean;   // new flag
+}
+
+// --------------------------------------
+// 2. Hydrate initial state from localStorage
+// --------------------------------------
+
+const savedToken = localStorage.getItem('token');
+let savedUser: User | null = null;
+if (savedToken) {
+  try {
+    const raw = localStorage.getItem('user');
+    if (raw) savedUser = JSON.parse(raw);
+    axios.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
+  } catch {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+  }
 }
 
 const initialState: AuthState = {
-  user: null,
-  token: null,
+  user: savedUser,
+  token: savedToken,
   isLoading: false,
   error: null,
-  didInitialize: false,
 };
 
 // ------------------------------------------------------
-// 2. Async Thunks: registerUser, loginUser, logoutUser
+// 3. Async Thunks: registerUser, loginUser, logoutUser
 // ------------------------------------------------------
 
-// registerUser: expects { name, email, phone?, password, confirmPassword }
-export const registerUser = createAsyncThunk<
-  { user: User; token: string },
-  { name: string; email: string; phone?: string; password: string; confirmPassword: string },
-  { rejectValue: string }
->(
+export const registerUser = createAsyncThunk(
   'auth/registerUser',
-  async (formData, thunkAPI) => {
+  async (
+    { name, email, phone, password, confirmPassword }: { name: string; email: string; phone?: string; password: string; confirmPassword: string },
+    { rejectWithValue }
+  ) => {
     try {
-      const payload = {
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone,
-        password: formData.password,
-        password_confirmation: formData.confirmPassword,
-      };
-
-      const response = await axios.post<{ message: string; user: User; token: string }>(
+      const response = await axios.post(
         `${API_BASE_URL}/register`,
-        payload,
-        {
-          headers: { 'Content-Type': 'application/json' },
-        }
+        { name, email, phone, password, password_confirmation: confirmPassword },
+        { headers: { 'Content-Type': 'application/json' } }
       );
-
-      return {
-        user: response.data.user,
-        token: response.data.token,
-      };
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.response) {
-        // validation errors (422) come back as an object of arrays
-        if (err.response.status === 422 && typeof err.response.data === 'object') {
-          const validationErrors = err.response.data as Record<string, unknown>;
-          const firstKey = Object.keys(validationErrors)[0];
-          const firstMsg = Array.isArray(validationErrors[firstKey])
-            ? (validationErrors[firstKey] as string[])[0]
-            : 'Validation error';
-          return thunkAPI.rejectWithValue(firstMsg);
-        }
-        // other errors with a "message" field
-        if (
-          err.response.data &&
-          typeof err.response.data === 'object' &&
-          'message' in err.response.data
-        ) {
-          return thunkAPI.rejectWithValue((err.response.data as { message: string }).message);
-        }
-      }
-      return thunkAPI.rejectWithValue('Registration failed. Please try again.');
+      return response.data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (err: any) {
+      return rejectWithValue(err.response?.data?.message || 'Registration failed');
     }
   }
 );
 
-// loginUser: expects { email, password }
-export const loginUser = createAsyncThunk<
-  { user: User; token: string },
-  { email: string; password: string },
-  { rejectValue: string }
->(
+export const loginUser = createAsyncThunk(
   'auth/loginUser',
-  async (credentials, thunkAPI) => {
+  async (
+    credentials: { email: string; password: string },
+    { rejectWithValue }
+  ) => {
     try {
-      const payload = {
-        email: credentials.email,
-        password: credentials.password,
-      };
-
-      const response = await axios.post<{ message: string; user: User; token: string }>(
+      const response = await axios.post(
         `${API_BASE_URL}/login`,
-        payload,
-        {
-          headers: { 'Content-Type': 'application/json' },
-        }
+        credentials,
+        { headers: { 'Content-Type': 'application/json' } }
       );
-
-      return {
-        user: response.data.user,
-        token: response.data.token,
-      };
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.response) {
-        if (
-          err.response.data &&
-          typeof err.response.data === 'object' &&
-          'message' in err.response.data
-        ) {
-          return thunkAPI.rejectWithValue((err.response.data as { message: string }).message);
-        }
-      }
-      return thunkAPI.rejectWithValue('Login failed. Please check your credentials.');
+      return response.data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (err: any) {
+      return rejectWithValue(err.response?.data?.message || 'Login failed');
     }
   }
 );
 
-// logoutUser: no args, but we need access to state.auth.token
-export const logoutUser = createAsyncThunk<void, void, { state: { auth: AuthState }; rejectValue: string }>(
+export const logoutUser = createAsyncThunk(
   'auth/logoutUser',
-  async (_, thunkAPI) => {
-    const state = thunkAPI.getState();
-    const token = state.auth.token;
-
-    if (!token) {
-      return thunkAPI.rejectWithValue('No token found');
-    }
-
+  async (_, { rejectWithValue }) => {
     try {
-      await axios.post(
-        `${API_BASE_URL}/logout`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-      return;
+      await axios.post(`${API_BASE_URL}/logout`);
     } catch {
-      return thunkAPI.rejectWithValue('Logout failed. Please try again.');
+      return rejectWithValue('Logout failed');
     }
   }
 );
 
 // ------------------------------------------------------
-// 3. Slice: reducers + extraReducers
+// 4. Slice: reducers + extraReducers
 // ------------------------------------------------------
 
 export const authSlice = createSlice({
   name: 'auth',
   initialState,
-  reducers: {
-    // 3.1 initializeAuth: load saved user & token (e.g. from localStorage)
-    initializeAuth(state, action: PayloadAction<{ user: User; token: string }>) {
-      state.user = action.payload.user;
-      state.token = action.payload.token;
-      state.isLoading = false;
-      state.error = null;
-      state.didInitialize = true;    // mark that we’re done hydrating
-      axios.defaults.headers.common['Authorization'] = `Bearer ${action.payload.token}`;
-    },
-
-    // 3.2 clearAuthError: reset only the error field
-    clearAuthError(state) {
-      state.error = null;
-    },
-  },
+  reducers: {},
   extraReducers: (builder) => {
-    // registerUser
-    builder.addCase(registerUser.pending, (state) => {
-      state.isLoading = true;
-      state.error = null;
-    });
-    builder.addCase(
-      registerUser.fulfilled,
-      (state, action: PayloadAction<{ user: User; token: string }>) => {
-        state.isLoading = false;
-        state.user = action.payload.user;
-        state.token = action.payload.token;
+    builder
+      .addCase(registerUser.pending, (state) => {
+        state.isLoading = true;
         state.error = null;
-         state.didInitialize = true;    // also mark initialized on fresh register
-        // persist to localStorage
-        localStorage.setItem('token', action.payload.token);
-        localStorage.setItem('user', JSON.stringify(action.payload.user));
-        axios.defaults.headers.common['Authorization'] = `Bearer ${action.payload.token}`;
-      }
-    );
-    builder.addCase(registerUser.rejected, (state, action) => {
-      state.isLoading = false;
-      state.error = action.payload ?? 'Registration failed';
-    });
-
-    // loginUser
-    builder.addCase(loginUser.pending, (state) => {
-      state.isLoading = true;
-      state.error = null;
-    });
-    builder.addCase(
-      loginUser.fulfilled,
-      (state, action: PayloadAction<{ user: User; token: string }>) => {
+      })
+      .addCase(registerUser.fulfilled, (state, { payload }) => {
         state.isLoading = false;
-        state.user = action.payload.user;
-        state.token = action.payload.token;
+        state.user = payload.user;
+        state.token = payload.token;
+        localStorage.setItem('token', payload.token);
+        localStorage.setItem('user', JSON.stringify(payload.user));
+        axios.defaults.headers.common['Authorization'] = `Bearer ${payload.token}`;
+      })
+      .addCase(registerUser.rejected, (state, { payload }) => {
+        state.isLoading = false;
+        state.error = payload as string;
+      })
+      .addCase(loginUser.pending, (state) => {
+        state.isLoading = true;
         state.error = null;
-        state.didInitialize = true;    // mark init on login
-        // persist to localStorage
-        localStorage.setItem('token', action.payload.token);
-        localStorage.setItem('user', JSON.stringify(action.payload.user));
-        axios.defaults.headers.common['Authorization'] = `Bearer ${action.payload.token}`;
-      }
-    );
-    builder.addCase(loginUser.rejected, (state, action) => {
-      state.isLoading = false;
-      state.error = action.payload ?? 'Login failed';
-    });
-
-    // logoutUser
-    builder.addCase(logoutUser.pending, (state) => {
-      state.isLoading = true;
-      state.error = null;
-    });
-    builder.addCase(logoutUser.fulfilled, (state) => {
-      state.isLoading = false;
-      state.user = null;
-      state.token = null;
-      state.error = null;
-      state.didInitialize = true;    // still consider init done
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      delete axios.defaults.headers.common['Authorization'];
-    }); 
-    builder.addCase(logoutUser.rejected, (state, action) => {
-      state.isLoading = false;
-      state.error = action.payload ?? 'Logout failed';
-    });
+      })
+      .addCase(loginUser.fulfilled, (state, { payload }) => {
+        state.isLoading = false;
+        state.user = payload.user;
+        state.token = payload.token;
+        localStorage.setItem('token', payload.token);
+        localStorage.setItem('user', JSON.stringify(payload.user));
+        axios.defaults.headers.common['Authorization'] = `Bearer ${payload.token}`;
+      })
+      .addCase(loginUser.rejected, (state, { payload }) => {
+        state.isLoading = false;
+        state.error = payload as string;
+      })
+      .addCase(logoutUser.fulfilled, (state) => {
+        state.user = null;
+        state.token = null;
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        delete axios.defaults.headers.common['Authorization'];
+      });
   },
 });
 
-// ------------------------------------------------------
-// 4. Exports
-// ------------------------------------------------------
-
-export const { initializeAuth, clearAuthError } = authSlice.actions;
 export default authSlice.reducer;

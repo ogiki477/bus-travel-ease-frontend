@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import App from "./App";
 import { store } from "./store/store";
-import AuthInitializer from "@/components/AuthInitializer";
+
 
 import "./index.css";
 
@@ -18,12 +18,10 @@ const root = createRoot(container);
 
 root.render(
   <Provider store={store}>
-    <QueryClientProvider client={queryClient}>
-      <AuthInitializer>
+    <QueryClientProvider client={queryClient}>   
         <BrowserRouter>
           <App />
         </BrowserRouter>
-      </AuthInitializer>
     </QueryClientProvider>
   </Provider>
 );
