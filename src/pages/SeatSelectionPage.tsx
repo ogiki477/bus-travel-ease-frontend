@@ -2,55 +2,75 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
 import { useAppSelector, useAppDispatch } from "@/store/hooks";
-import { toggleSeatSelection, createBooking } from "@/store/slices/bookingSlice";
+import { toggleSeatSelection, createBooking, selectBus, Bus } from "@/store/slices/bookingSlice";
 import { getSeats } from "@/store/thunks/bookingThunks";
+import { BUS_PIC_BASE } from "@/store/apiConfig";
+import Spinner from "./Spinner";
 
 const SeatSelectionPage: React.FC = () => {
   const navigate = useNavigate();
   const { busId } = useParams<{ busId: string }>();
   const dispatch = useAppDispatch();
-  const { selectedBus, seats } = useAppSelector((state) => state.booking);
+  const { selectedBus, seats } = useAppSelector((s) => s.booking);
   const { toast } = useToast();
   const [passengerDetails, setPassengerDetails] = useState({
     name: "",
     email: "",
     phone: "",
   });
-  
-  useEffect(() => {
-    // If no bus is selected or bus ID doesn't match URL param, fetch seats for this bus
-    if (!selectedBus || selectedBus.id !== busId) {
-      // Redirect to search page if busId is invalid
-      if (!busId) {
-        navigate("/search");
-        return;
-      }
-      
-      // Load seats for this bus
-      dispatch(getSeats(busId));
-    }
-  }, [busId, selectedBus, dispatch, navigate]);
 
-  const selectedSeats = seats.filter((seat) => seat.isSelected);
-  const totalAmount = selectedBus ? selectedBus.price * selectedSeats.length : 0;
-  
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat("en-UG", {
+  // on mount or bus change, load seats
+  useEffect(() => {
+  if (busId) {
+    const saved = localStorage.getItem("selectedBus");
+    if (saved && (!selectedBus || selectedBus.id !== busId)) {
+      const busData: Bus = JSON.parse(saved);
+      dispatch(selectBus(busData));
+    }
+    // ALWAYS fetch seats, even if you loaded selectedBus from localStorage
+    dispatch(getSeats(busId));
+  } else {
+    navigate("/search");
+  }
+}, [busId, dispatch, navigate, selectedBus]);
+
+  // Show loader until selectedBus is populated
+  if (!selectedBus) {
+    return (
+      <div className="flex justify-center items-center h-screen">
+        <Spinner loading />
+      </div>
+    );
+  }
+
+  // which seats are selected
+  const selectedSeats = seats.filter((s) => s.isSelected);
+  // per-seat fare from selectedBus.price; total = price * count
+  const farePerSeat = selectedBus?.price ?? 0;
+  const totalAmount = farePerSeat * selectedSeats.length;
+
+  const fmt = (value: number) =>
+    new Intl.NumberFormat("en-UG", {
       style: "currency",
       currency: "UGX",
       minimumFractionDigits: 0,
-    }).format(price);
-  };
+      maximumFractionDigits: 0,
+    }).format(value);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const { name, value } = e.target;
-    setPassengerDetails((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setPassengerDetails((p) => ({ ...p, [name]: value }));
   };
 
   const handleProceedToCheckout = () => {
@@ -63,7 +83,8 @@ const SeatSelectionPage: React.FC = () => {
       return;
     }
 
-    if (!passengerDetails.name || !passengerDetails.email || !passengerDetails.phone) {
+    const { name, email, phone } = passengerDetails;
+    if (!name || !email || !phone) {
       toast({
         title: "Missing information",
         description: "Please fill in all passenger details",
@@ -72,19 +93,16 @@ const SeatSelectionPage: React.FC = () => {
       return;
     }
 
-    // Create the booking
     dispatch(createBooking(passengerDetails));
     navigate("/booking-confirmation");
   };
 
-  // Generate a grid of seats (5 columns x 8 rows for a typical bus)
+  // seat map splitter
   const renderSeatMap = () => {
-    // Group seats into rows of 5 (common bus layout: 2 seats | aisle | 3 seats)
-    const rows = [];
+    const rows: typeof seats[] = [];
     for (let i = 0; i < seats.length; i += 5) {
       rows.push(seats.slice(i, i + 5));
     }
-
     return (
       <div className="mt-6">
         <div className="flex justify-center mb-8">
@@ -92,32 +110,35 @@ const SeatSelectionPage: React.FC = () => {
             Driver's Cabin
           </div>
         </div>
-        
+
         <div className="flex justify-center mb-6">
           <div className="space-y-4">
-            {rows.map((row, rowIndex) => (
-              <div key={rowIndex} className="flex space-x-3 md:space-x-4">
-                {row.map((seat, seatIndex) => {
-                  // Add an empty space in the middle (aisle)
-                  const isAisle = seatIndex === 2;
-                  
-                  if (isAisle) {
-                    return <div key={`aisle-${rowIndex}-${seatIndex}`} className="w-10 h-10"></div>;
+            {rows.map((row, ri) => (
+              <div key={ri} className="flex space-x-3 md:space-x-4">
+                {row.map((seat, si) => {
+                  if (si === 2) {
+                    return (
+                      <div
+                        key={`aisle-${ri}-${si}`}
+                        className="w-10 h-10"
+                      />
+                    );
                   }
-                  
+                  const base =
+                    !seat.isAvailable
+                      ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                      : seat.isSelected
+                      ? "bg-bus-primary text-white"
+                      : "bg-white border border-bus-primary text-bus-primary hover:bg-bus-primary/10";
                   return (
                     <button
                       key={seat.id}
-                      className={`w-10 h-10 md:w-12 md:h-12 rounded-md flex items-center justify-center font-medium transition-colors
-                        ${
-                          !seat.isAvailable
-                            ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                            : seat.isSelected
-                            ? "bg-bus-primary text-white"
-                            : "bg-white border border-bus-primary text-bus-primary hover:bg-bus-primary/10"
-                        }`}
-                      onClick={() => seat.isAvailable && dispatch(toggleSeatSelection(seat.id))}
+                      className={`w-10 h-10 md:w-12 md:h-12 rounded-md flex items-center justify-center font-medium transition-colors ${base}`}
                       disabled={!seat.isAvailable}
+                      onClick={() =>
+                        seat.isAvailable &&
+                        dispatch(toggleSeatSelection(seat.id))
+                      }
                     >
                       {seat.number}
                     </button>
@@ -127,169 +148,152 @@ const SeatSelectionPage: React.FC = () => {
             ))}
           </div>
         </div>
-        
+
         <div className="flex justify-center items-center space-x-8">
-          <div className="flex items-center">
-            <div className="w-6 h-6 bg-white border border-bus-primary mr-2"></div>
-            <span className="text-sm">Available</span>
-          </div>
-          <div className="flex items-center">
-            <div className="w-6 h-6 bg-bus-primary mr-2"></div>
-            <span className="text-sm">Selected</span>
-          </div>
-          <div className="flex items-center">
-            <div className="w-6 h-6 bg-gray-300 mr-2"></div>
-            <span className="text-sm">Booked</span>
-          </div>
+          <Legend color="white" label="Available" />
+          <Legend color="bus-primary" label="Selected" />
+          <Legend color="gray-300" label="Booked" />
         </div>
       </div>
     );
   };
 
+  //if (!selectedBus) return null; // or a loader
+
+  
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       <Navbar />
-      
+
       <div className="container mx-auto py-8 px-4">
         <div className="mb-6">
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             className="mb-4"
             onClick={() => navigate("/search")}
           >
             ← Back to Search Results
           </Button>
-          
-          <h1 className="text-3xl font-bold text-gray-800">Select Your Seats</h1>
-          {selectedBus && (
-            <p className="text-gray-600 mt-2">
-              {selectedBus.routeName} • {selectedBus.departureTime} • {new Date().toLocaleDateString()}
-            </p>
-          )}
+
+          <h1 className="text-3xl font-bold text-gray-800">
+            Select Your Seats
+          </h1>
+          <p className="text-gray-600 mt-2">
+            {selectedBus.routeName} • {selectedBus.departureTime} •{" "}
+            {new Date().toLocaleDateString()}
+          </p>
         </div>
-        
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Seat map */}
           <div className="lg:col-span-2">
             <Card>
               <CardHeader>
                 <CardTitle>Bus Seat Map</CardTitle>
               </CardHeader>
-              <CardContent>
-                {renderSeatMap()}
-              </CardContent>
+              <CardContent>{renderSeatMap()}</CardContent>
             </Card>
           </div>
-          
+
+          {/* Booking summary */}
           <div>
             <Card>
               <CardHeader>
                 <CardTitle>Booking Summary</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {selectedBus && (
-                    <>
-                      <div>
-                        <div className="text-sm text-gray-500">Bus</div>
-                        <div className="font-medium">{selectedBus.companyName}</div>
-                        <div className="text-sm">{selectedBus.busNumber}</div>
+                 <div className="grid grid-cols-2 gap-x-4 gap-y-6">
+                    {selectedBus.busPic && (
+                      <div className="col-span-2">
+                        <img
+                          src={`${BUS_PIC_BASE}/${selectedBus.busPic}`}
+                          alt={selectedBus.companyName}
+                          className="w-full h-32 object-cover rounded mb-4"
+                        />
                       </div>
-                      
-                      <div className="flex justify-between">
-                        <div>
-                          <div className="text-sm text-gray-500">From</div>
-                          <div className="font-medium">{selectedBus.origin}</div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-500">To</div>
-                          <div className="font-medium">{selectedBus.destination}</div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex justify-between">
-                        <div>
-                          <div className="text-sm text-gray-500">Departure</div>
-                          <div className="font-medium">{selectedBus.departureTime}</div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-500">Arrival</div>
-                          <div className="font-medium">{selectedBus.arrivalTime}</div>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                  
-                  <div>
-                    <div className="text-sm text-gray-500">Selected Seats</div>
-                    {selectedSeats.length > 0 ? (
-                      <div className="font-medium">
-                        {selectedSeats.map(seat => seat.number).join(", ")}
-                      </div>
-                    ) : (
-                      <div className="text-orange-500">No seats selected</div>
                     )}
-                  </div>
-                  
-                  <div>
-                    <div className="text-sm text-gray-500">Fare</div>
-                    <div className="font-medium">{selectedBus ? formatPrice(selectedBus.price) : "N/A"} per seat</div>
-                  </div>
-                  
-                  <div className="pt-4 border-t">
-                    <div className="flex justify-between text-lg font-bold">
-                      <div>Total</div>
-                      <div>{formatPrice(totalAmount)}</div>
+
+                    {/* Bus Name */}
+                    <Detail label="Bus" value={selectedBus.companyName} />
+                    <Detail label="Plate" value={selectedBus.busNumber} />
+
+                    {/* From / To */}
+                    <Detail label="From" value={selectedBus.origin} />
+                    <Detail label="To" value={selectedBus.destination} />
+
+                    {/* Departs full date/time */}
+                    <Detail
+                      label="Departs"
+                      value={
+                        selectedBus.departureFull
+                          ? new Date(selectedBus.departureFull).toLocaleString()
+                          : selectedBus.departureTime
+                      }
+                    />
+                    {/* Arrives full date/time */}
+                    <Detail
+                      label="Arrives"
+                      value={
+                        selectedBus.arrivalFull
+                          ? new Date(selectedBus.arrivalFull).toLocaleString()
+                          : selectedBus.arrivalTime
+                      }
+                    />
+
+                    {/* Seats */}
+                    <div>
+                      <div className="text-sm text-gray-500">Selected Seats</div>
+                      <div className="font-medium">
+                        {selectedSeats.length > 0
+                          ? selectedSeats.map((s) => s.number).join(", ")
+                          : "None"}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      for {selectedSeats.length} seat(s)
+
+                    {/* Fare per seat */}
+                    <Detail label="Fare per seat" value={fmt(farePerSeat)} />
+
+                    {/* Total */}
+                    <div className="col-span-2 pt-4 border-t">
+                      <div className="flex justify-between text-lg font-bold">
+                        <div>Total</div>
+                        <div>{fmt(totalAmount)}</div>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        for {selectedSeats.length} seat
+                        {selectedSeats.length !== 1 && "s"}
+                      </div>
                     </div>
                   </div>
-                </div>
-                
+
+                {/* Passenger form */}
                 <div className="mt-6 space-y-4">
                   <h3 className="font-medium">Passenger Details</h3>
-                  
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-sm text-gray-500">Full Name</label>
-                      <input
-                        type="text"
-                        name="name"
-                        className="w-full h-10 px-3 mt-1 rounded-md border border-gray-300"
-                        placeholder="Enter your full name"
-                        value={passengerDetails.name}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="text-sm text-gray-500">Email</label>
-                      <input
-                        type="email"
-                        name="email"
-                        className="w-full h-10 px-3 mt-1 rounded-md border border-gray-300"
-                        placeholder="Enter your email address"
-                        value={passengerDetails.email}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="text-sm text-gray-500">Phone Number</label>
-                      <input
-                        type="tel"
-                        name="phone"
-                        className="w-full h-10 px-3 mt-1 rounded-md border border-gray-300"
-                        placeholder="Enter your phone number"
-                        value={passengerDetails.phone}
-                        onChange={handleInputChange}
-                      />
-                    </div>
-                  </div>
+                  <InputField
+                    label="Full Name"
+                    name="name"
+                    value={passengerDetails.name}
+                    onChange={handleInputChange}
+                  />
+                  <InputField
+                    label="Email"
+                    name="email"
+                    value={passengerDetails.email}
+                    onChange={handleInputChange}
+                    type="email"
+                  />
+                  <InputField
+                    label="Phone Number"
+                    name="phone"
+                    value={passengerDetails.phone}
+                    onChange={handleInputChange}
+                    type="tel"
+                  />
                 </div>
               </CardContent>
               <CardFooter>
-                <Button 
+                <Button
                   className="w-full bg-bus-secondary hover:bg-orange-600"
                   onClick={handleProceedToCheckout}
                 >
@@ -300,14 +304,68 @@ const SeatSelectionPage: React.FC = () => {
           </div>
         </div>
       </div>
-      
-      <footer className="mt-auto bg-gray-800 text-white py-4 px-6">
-        <div className="container mx-auto text-center text-gray-400">
-          <p>© {new Date().getFullYear()} UgandaBus. All rights reserved.</p>
-        </div>
-      </footer>
     </div>
   );
 };
 
 export default SeatSelectionPage;
+
+// small helpers
+function Legend({
+  color,
+  label,
+}: {
+  color: string;
+  label: string;
+}) {
+  const bg =
+    color === "bus-primary" ? "bg-bus-primary" : `bg-${color}`;
+  return (
+    <div className="flex items-center">
+      <div className={`${bg} w-6 h-6 mr-2 rounded`}></div>
+      <span className="text-sm">{label}</span>
+    </div>
+  );
+}
+
+function Detail({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <div className="text-sm text-gray-500">{label}</div>
+      <div className="font-medium">{value}</div>
+    </div>
+  );
+}
+
+function InputField({
+  label,
+  name,
+  value,
+  onChange,
+  type = "text",
+}: {
+  label: string;
+  name: string;
+  value: string;
+  type?: string;
+  onChange: React.ChangeEventHandler<HTMLInputElement>;
+}) {
+  return (
+    <div>
+      <label className="text-sm text-gray-500">{label}</label>
+      <input
+        type={type}
+        name={name}
+        value={value}
+        onChange={onChange}
+        className="w-full h-10 px-3 mt-1 rounded-md border border-gray-300"
+      />
+    </div>
+  );
+}

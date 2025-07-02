@@ -1,4 +1,5 @@
-import React, { useEffect } from "react";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
@@ -10,108 +11,181 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/components/ui/use-toast";
 import { useAppSelector, useAppDispatch } from "@/store/hooks";
-import { setSearchParams, searchBuses, selectBus } from "@/store/slices/bookingSlice";
+import { setSearchParams, selectBus, Bus } from "@/store/slices/bookingSlice";
 
-const locations = ["Kampala", "Gulu", "Elegu", "Juba"];
+import { fetchRoutes } from "@/store/slices/routeSlice";
+import { fetchAllBuses } from "@/store/slices/busSlice";
+import { fetchSchedules, clearSchedules, Schedule } from "@/store/slices/scheduleSlice";
+import { BUS_PIC_BASE } from "@/store/apiConfig";
+import Spinner from "./Spinner";
 
 const SearchPage: React.FC = () => {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { searchParams, foundBuses } = useAppSelector((state) => state.booking);
   const { toast } = useToast();
+  const [userSearched, setUserSearched] = useState(false);
 
+  const { searchParams } = useAppSelector((s) => s.booking);
+  const { schedules, isLoading: schedLoading } = useAppSelector(
+    (s) => s.schedule
+  );
+  const { buses, isLoading: busLoading } = useAppSelector((s) => s.bus);
+  const { routes, isLoading: routeLoading } = useAppSelector(
+    (s) => s.routes
+  );
+
+  const uniqueOrigins = useMemo(
+  () => Array.from(new Set(routes.map((r) => r.origin))),
+  [routes],
+    );
+    const uniqueDestinations = useMemo(
+      () => Array.from(new Set(routes.map((r) => r.destination))),
+      [routes],
+    );
+
+  // 1) load dropdowns + full bus list, and clear old schedules
   useEffect(() => {
-    dispatch(searchBuses());
+    dispatch(fetchRoutes());
+    dispatch(fetchAllBuses());
+    dispatch(clearSchedules());
   }, [dispatch]);
 
-  const handleSearch = (): void => {
+  // 2) whenever origin & destination are set, auto-search
+  useEffect(() => {
     if (searchParams.origin && searchParams.destination) {
-      dispatch(searchBuses());
-    } else {
-      toast({
+      setUserSearched(true);
+      dispatch(
+        fetchSchedules({
+          origin: searchParams.origin,
+          destination: searchParams.destination,
+          date: searchParams.date || undefined,
+        })
+      );
+    }
+  }, [dispatch, searchParams.origin, searchParams.destination, searchParams.date]);
+
+  const handleSearch = () => {
+    if (!searchParams.origin || !searchParams.destination) {
+      return toast({
         title: "Search Error",
         description: "Please select both origin and destination",
         variant: "destructive",
       });
     }
+    // you could also re‐fetch on date changes here
+    setUserSearched(true);
+    dispatch(
+      fetchSchedules({
+        origin: searchParams.origin,
+        destination: searchParams.destination,
+        date: searchParams.date || undefined,
+      })
+    );
   };
 
-  const handleSelectBus = (bus: typeof foundBuses[number]): void => {
-    dispatch(selectBus(bus));
-    navigate(`/seat-selection/${bus.id}`);
-  };
+  // 3) client‐side refine exact-match
+  const filteredSchedules = useMemo(() => {
+    if (!userSearched) return [];
+    return schedules.filter(
+      (s) =>
+        s.route.origin.toLowerCase() ===
+          searchParams.origin.toLowerCase() &&
+        s.route.destination.toLowerCase() ===
+          searchParams.destination.toLowerCase()
+    );
+  }, [schedules, searchParams, userSearched]);
 
-  const formatPrice = (price: number): string =>
-    new Intl.NumberFormat("en-UG", {
-      style: "currency",
-      currency: "UGX",
-      minimumFractionDigits: 0,
-    }).format(price);
+  // 4) what to show: before search → all buses | after → schedules
+  const displayList = userSearched ? filteredSchedules : buses;
+
+  if (routeLoading || busLoading || schedLoading) {
+    return (
+      <div className="flex justify-center items-center h-screen">
+        <Spinner loading />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       <Navbar />
 
       <div className="container mx-auto py-8 px-4">
+        {/* Search form */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-800 mb-6">Find Your Bus</h1>
-
+          <h1 className="text-3xl font-bold text-gray-800 mb-6">
+            Find Your Bus
+          </h1>
           <Card className="bg-white shadow-md">
             <CardContent className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm text-gray-600">From</label>
+                {/* Origin */}
+                <div>
+                  <label className="block text-sm text-gray-600">From</label>
                   <Select
                     value={searchParams.origin}
-                    onValueChange={(value) =>
-                      dispatch(setSearchParams({ ...searchParams, origin: value }))
+                    onValueChange={(v) =>
+                      dispatch(
+                        setSearchParams({ ...searchParams, origin: v })
+                      )
                     }
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select origin" />
                     </SelectTrigger>
                     <SelectContent>
-                      {locations.map((loc) => (
-                        <SelectItem key={loc} value={loc}>
-                          {loc}
+                      {uniqueOrigins.map((origin) => (
+                        <SelectItem key={origin} value={origin}>
+                          {origin}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm text-gray-600">To</label>
+                {/* Destination */}
+                <div>
+                  <label className="block text-sm text-gray-600">To</label>
                   <Select
                     value={searchParams.destination}
-                    onValueChange={(value) =>
-                      dispatch(setSearchParams({ ...searchParams, destination: value }))
+                    onValueChange={(v) =>
+                      dispatch(
+                        setSearchParams({
+                          ...searchParams,
+                          destination: v,
+                        })
+                      )
                     }
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select destination" />
                     </SelectTrigger>
                     <SelectContent>
-                      {locations.map((loc) => (
-                        <SelectItem key={loc} value={loc}>
-                          {loc}
+                      {uniqueDestinations.map((destination) => (
+                        <SelectItem key={destination} value={destination}>
+                          {destination}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm text-gray-600">Date</label>
+                {/* Date */}
+                <div>
+                  <label className="block text-sm text-gray-600">Date</label>
                   <input
                     type="date"
                     className="w-full h-10 px-3 rounded-md border border-gray-300"
                     value={searchParams.date}
                     onChange={(e) =>
-                      dispatch(setSearchParams({ ...searchParams, date: e.target.value }))
+                      dispatch(
+                        setSearchParams({
+                          ...searchParams,
+                          date: e.target.value,
+                        })
+                      )
                     }
                     min={new Date().toISOString().split("T")[0]}
                   />
@@ -122,7 +196,7 @@ const SearchPage: React.FC = () => {
                     className="w-full bg-bus-primary hover:bg-blue-700"
                     onClick={handleSearch}
                   >
-                    Search Buses
+                    Search
                   </Button>
                 </div>
               </div>
@@ -130,113 +204,131 @@ const SearchPage: React.FC = () => {
           </Card>
         </div>
 
-        <div className="space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-bold text-gray-800">
-              {foundBuses.length > 0
-                ? `${foundBuses.length} Buses Found`
-                : "No Buses Found"}
-            </h2>
-
-            {searchParams.origin && searchParams.destination && (
-              <div className="text-lg font-medium text-gray-600">
-                {searchParams.origin} to {searchParams.destination}
-                {searchParams.date &&
-                  ` • ${new Date(searchParams.date).toLocaleDateString()}`}
-              </div>
-            )}
+        {/* Results */}
+        {userSearched && filteredSchedules.length === 0 ? (
+          <div className="text-center text-gray-600 py-8">
+            No buses available for{" "}
+            <strong>
+              {searchParams.origin} → {searchParams.destination}
+            </strong>
           </div>
+        ) : (
+          <div className="grid md:grid-cols-3 gap-4">
+            {displayList.map((item: any) => (
+              <Card key={item.id}>
+                <CardContent className="p-4">
+                  {/* picture */}
+                  {(
+                    item.bus_pic ||
+                    item.bus?.bus_pic
+                  ) && (
+                    <img
+                      src={`${BUS_PIC_BASE}/${
+                        item.bus_pic || item.bus.bus_pic
+                      }`}
+                      className="w-full h-32 object-cover rounded mb-2"
+                      alt={
+                        item.name ||
+                        `${item.route.origin}→${item.route.destination}`
+                      }
+                    />
+                  )}
 
-          {foundBuses.length > 0 ? (
-            <div className="space-y-4">
-              {foundBuses.map((bus) => (
-                <Card
-                  key={bus.id}
-                  className="overflow-hidden hover:shadow-lg transition-shadow"
-                >
-                  <CardContent className="p-0">
-                    <div className="p-6">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="text-xl font-bold text-bus-primary">
-                            {bus.routeName}
-                          </h3>
-                          <p className="text-gray-500">
-                            {bus.companyName} • Bus #{bus.busNumber}
-                          </p>
-                          {bus.stops?.length && (
-                            <p className="text-sm text-gray-400 mt-1">
-                              Stops: {bus.stops.join(", ")}
-                            </p>
+                  {/* bare bus */}
+                  {"name" in item && (
+                    <h2 className="text-xl font-bold">
+                      {item.name}
+                    </h2>
+                  )}
+                  {"number_plate" in item && (
+                    <p>Number Plate: {item.number_plate}</p>
+                  )}
+                  {"total_seats" in item && (
+                    <p>Seats: {item.total_seats}</p>
+                  )}
+                  {"amenities" in item && (
+                    <p>Customer Care: {item.amenities}</p>
+                  )}
+
+                  {/* schedule */}
+                  {"departure_time" in item &&
+                    item.bus &&
+                    item.route && (
+                      <>
+                        <h2 className="text-xl font-bold">
+                          {item.route.origin} →{" "}
+                          {item.route.destination}
+                        </h2>
+                        <p>
+                          Departs:{" "}
+                          {new Date(
+                            item.departure_time
+                          ).toLocaleString()}
+                        </p>
+                        <p>
+                          Arrives:{" "}
+                          {new Date(
+                            item.arrival_time
+                          ).toLocaleString()}
+                        </p>
+                        <p>
+                          Price:{" "}
+                          {new Intl.NumberFormat(
+                            "en-UG",
+                            {
+                              style: "currency",
+                              currency: "UGX",
+                              minimumFractionDigits: 0,
+                              maximumFractionDigits: 0,
+                            }
+                          ).format(
+                            Number(item.route.base_price)
                           )}
-                        </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-bus-secondary">
-                            {formatPrice(bus.price)}
-                          </div>
-                          <p className="text-sm text-gray-500">per person</p>
-                        </div>
-                      </div>
+                        </p>
+                        <div className="mt-2 flex justify-end">
+                            <Button
+                              onClick={() => {
+                                const s = item as Schedule;
+                                const busData: Bus = {
+                                  id: String(s.id),
+                                  routeName: `${s.route.origin} → ${s.route.destination}`,
+                                  origin: s.route.origin,
+                                  destination: s.route.destination,
+                                  departureTime: new Date(s.departure_time).toLocaleTimeString([], {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  }),
+                                  arrivalTime: new Date(s.arrival_time).toLocaleTimeString([], {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  }),
+                                  // new fields:
+                                  departureFull: s.departure_time,
+                                  arrivalFull: s.arrival_time,
+                                  price: parseFloat(s.route.base_price),
+                                  availableSeats: s.bus.total_seats,
+                                  busNumber: s.bus.number_plate,
+                                  companyName: s.bus.name,
+                                  busPic: s.bus.bus_pic,
+                                };
+                                // persist
+                                localStorage.setItem("selectedBus", JSON.stringify(busData));
+                                dispatch(selectBus(busData));
+                                navigate(`/seat-selection/${s.id}`);
+                              }}
+                            >
+                              Select Seats
+                            </Button>
 
-                      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                          <div className="text-sm text-gray-500">Departure</div>
-                          <div className="font-medium">{bus.departureTime}</div>
-                          <div className="text-gray-700">{bus.origin}</div>
                         </div>
-                        <div>
-                          <div className="text-sm text-gray-500">Arrival</div>
-                          <div className="font-medium">{bus.arrivalTime}</div>
-                          <div className="text-gray-700">{bus.destination}</div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-500">Available Seats</div>
-                          <div className="font-medium">{bus.availableSeats}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <Separator />
-
-                    <div className="p-4 bg-gray-50 flex justify-end">
-                      <Button
-                        className="bg-bus-primary hover:bg-blue-700"
-                        onClick={() => handleSelectBus(bus)}
-                      >
-                        Select Seats
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <Card className="bg-white p-8 text-center">
-              <div className="text-5xl mb-4">🚌</div>
-              <h3 className="text-xl font-medium text-gray-700 mb-2">
-                No buses found
-              </h3>
-              <p className="text-gray-500 mb-6">
-                {searchParams.origin && searchParams.destination
-                  ? "We couldn't find any buses for that route."
-                  : "Select origin & destination to search."}
-              </p>
-              <Button
-                className="bg-bus-primary hover:bg-blue-700"
-                onClick={() => navigate("/")}
-              >
-                Return to Home
-              </Button>
-            </Card>
-          )}
-        </div>
+                      </>
+                    )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
-
-      <footer className="mt-auto bg-gray-800 text-white py-4 px-6">
-        <div className="container mx-auto text-center text-gray-400">
-          <p>© {new Date().getFullYear()} Eco Bus Company. All rights reserved.</p>
-        </div>
-      </footer>
     </div>
   );
 };
