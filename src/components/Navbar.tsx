@@ -23,9 +23,13 @@ const Navbar: React.FC = () => {
     <nav className="bg-green-600 text-black py-4 px-6 shadow-md">
       <div className="container mx-auto flex justify-between items-center">
         <Link to="/" className="text-2xl font-bold flex items-center text-black">
-          <span className="mr-2">🚌</span>
-          EcoBus
-        </Link>
+      <img
+        src="public/logo/images (2).jpeg"
+        alt="Bus Logo"
+        className="w-8 h-8 mr-2"
+      />
+      EcoBus
+    </Link>
         <div className="flex items-center space-x-6">
           <Link to="/" className="hover:text-green-200 transition-colors text-black font-bold">
             Home
