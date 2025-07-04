@@ -39,7 +39,7 @@ const AdminBookings: React.FC = () => {
     },
     { 
       id: "BK-123458", 
-      passenger: "Robert Johnson", 
+      passenger: "", 
       email: "robert@example.com",
       phone: "+256 702 345 678",
       route: "Mbarara - Kampala", 
